@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "vercel-build": "echo 'Build complete'"
+    "vercel-build": "vercel build --no-cache"  // ✅ 新增这行：禁用构建缓存+强制稳定构建
   },
   "dependencies": {
     "express": "^4.18.2",
@@ -13,7 +13,7 @@
     "cors": "^2.8.5"
   },
   "engines": {
-    "node": ">=16.x"
+    "node": ">=14.x"
   },
   "license": "MIT"
 }
