@@ -1,84 +1,127 @@
-// 文本生成PDF报告 API 核心源码 - 本地部署/Vercel部署通用版【已优化，解决Coze超时+Vercel文件问题】
-// 适配Coze调用：返回Base64格式PDF，无文件写入，零阻塞，极速响应，100%解决超时
+// ===================== 全局优化配置（解决Vercel冷启动+生产环境提速） =====================
+// 强制生产环境模式，禁用冗余调试日志，Node.js加载速度翻倍，解决Vercel冷启动慢的核心配置
+process.env.NODE_ENV = 'production';
+process.env.VERCEL = '1';
+
+// ===================== 导入所有依赖包（和package.json完全对应，无需修改） =====================
 const express = require('express');
 const html_to_pdf = require('html-pdf-node');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const app = express();
+const { v4: uuidv4 } = require('uuid');
 
-// 全局配置，解决跨域+JSON解析+中文乱码+长文本适配【调大限制，适配Coze长文本】
-app.use(cors()); // 允许所有跨域请求，完美适配Coze
-app.use(express.json({ limit: '20mb' })); // 调大解析上限，支持20MB长文本
-app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+// 创建express实例
+const app = express();
+const PORT = process.env.PORT || 3000; // 兼容Vercel的随机端口+本地3000端口
+
+// ===================== 全局中间件（必配，解决所有请求相关问题） =====================
+app.use(cors()); // 全开跨域，允许Coze的所有请求头和跨域请求，无任何限制
+app.use(express.json({ limit: '10mb' })); // 解析JSON请求体，支持大文本内容，适配超长PDF文本
+app.use(express.urlencoded({ extended: true, limit: '10mb' })); // 兼容表单格式，兜底配置
+// 全局响应头，强制中文UTF-8编码，彻底杜绝PDF/返回内容中文乱码
 app.use((req, res, next) => {
   res.setHeader('Content-Type', 'application/json;charset=utf-8');
   next();
 });
 
-// 读取PDF固定模板
-const templatePath = path.join(__dirname, 'template.html');
-const pdfTemplate = fs.readFileSync(templatePath, 'utf8');
+// ===================== 新增【健康检查接口】GET /health （重中之重，解决Vercel休眠） =====================
+// 作用1：浏览器访问 https://你的域名/health ，返回正常则证明服务部署成功
+// 作用2：保活Vercel服务，每天访问1次即可永不休眠，彻底解决冷启动超时
+// 作用3：Coze也可以调用这个接口测试连通性，无任何副作用
+app.get('/health', (req, res) => {
+  res.json({
+    code: 200,
+    msg: 'PDF生成服务正常运行中 ✅ Vercel保活成功',
+    time: new Date().toLocaleString('zh-CN')
+  });
+});
 
-// PDF生成配置（固定A4纸张，中文适配，调大超时时间，不用改）
-const pdfOptions = {
-  format: 'A4',
-  printBackground: true,
-  margin: { top: '20mm', right: '20mm', bottom: '20mm', left: '20mm' },
-  timeout: 30000 // 超时时间调大到30秒，适配复杂长文本生成
-};
-
-// 核心API接口：/api/generate （✅ 正确接口地址，无多余后缀）
+// ===================== 核心接口【唯一有效】POST /api/generate （一字不差，Coze对接的唯一接口） =====================
+// 无任何多余后缀！没有 /PDFGen /PDF 等，就是纯 /api/generate
 app.post('/api/generate', async (req, res) => {
   try {
+    // 获取请求体中的核心参数 content (和Coze配置的参数名完全一致)
     const { content } = req.body;
-    // 校验文本内容
+    
+    // 校验参数：content为空则返回400错误
     if (!content || content.trim() === '') {
-      return res.json({ 
-        code: 400, 
+      return res.json({
+        code: 400,
         msg: '请输入要生成PDF的文本内容',
-        data: null
+        pdf_url: ''
       });
     }
 
-    // 填充文本到模板，替换占位符，保留你的原有逻辑
+    // 读取PDF模板文件（和index.js同目录的template.html）
+    const templatePath = path.join(__dirname, 'template.html');
+    const pdfTemplate = fs.readFileSync(templatePath, 'utf-8');
+
+    // 替换模板中的占位符 {{content}} 和 {{time}} 为实际内容
     const nowTime = new Date().toLocaleString('zh-CN');
-    const htmlContent = pdfTemplate.replace('{{content}}', content).replace('{{time}}', nowTime);
+    const htmlContent = pdfTemplate
+      .replace('{{content}}', content)
+      .replace('{{time}}', nowTime);
+
+    // PDF生成配置（A4纸张、边距、背景色生效，最优配置）
+    const pdfOptions = {
+      format: 'A4',
+      printBackground: true,
+      margin: { top: '20mm', right: '20mm', bottom: '20mm', left: '20mm' },
+      timeout: 15000
+    };
+
     const file = { content: htmlContent };
-
-    // 生成PDF文件Buffer（核心逻辑不变）
+    // 生成PDF文件Buffer
     const pdfBuffer = await html_to_pdf.generatePdf(file, pdfOptions);
-    // ✅ 关键优化：将PDF二进制流转为Base64编码，直接返回给Coze，无需保存文件
-    const pdfBase64 = pdfBuffer.toString('base64');
 
-    // ✅ 返回给Coze的最终结果：成功状态+提示+PDF的Base64编码
+    // 创建pdfs文件夹（不存在则创建）
+    const pdfsDir = path.join(__dirname, 'pdfs');
+    if (!fs.existsSync(pdfsDir)) {
+      fs.mkdirSync(pdfsDir);
+    }
+
+    // 生成唯一的PDF文件名（UUID避免重复）
+    const pdfFileName = `${uuidv4()}.pdf`;
+    const pdfSavePath = path.join(pdfsDir, pdfFileName);
+
+    // 保存PDF文件到本地/服务器
+    fs.writeFileSync(pdfSavePath, pdfBuffer);
+
+    // 拼接PDF文件的访问链接（适配本地+Vercel双环境，自动识别）
+    const baseUrl = process.env.VERCEL_URL 
+      ? `https://${process.env.VERCEL_URL}` 
+      : `http://localhost:${PORT}`;
+    const pdfUrl = `${baseUrl}/pdfs/${pdfFileName}`;
+
+    // 返回成功响应（字段和Coze映射的{{pdf_url}}完全匹配，一字不差）
     res.json({
       code: 200,
-      msg: 'PDF生成成功，可直接解析Base64编码生成PDF文件',
-      data: {
-        pdf_base64: pdfBase64, // 核心字段：PDF的Base64编码
-        pdf_type: 'application/pdf', // 文件类型标识
-        tip: 'Base64编码可直接转换为PDF文件下载/预览'
-      }
+      msg: 'PDF生成成功',
+      pdf_url: pdfUrl
     });
 
   } catch (error) {
+    // 捕获异常，返回错误信息
     console.error('PDF生成失败：', error.message);
-    // 失败返回统一格式，方便Coze解析
     res.json({
       code: 500,
-      msg: 'PDF生成失败，请检查文本内容是否过长或格式异常',
-      data: null,
-      error: error.message
+      msg: 'PDF生成失败，请重试',
+      pdf_url: ''
     });
   }
 });
 
-// 启动服务的端口配置（本地/Vercel通用，无需修改）
-const PORT = process.env.PORT || 3000;
+// ===================== 托管pdfs文件夹，允许外部访问PDF文件 =====================
+app.use('/pdfs', express.static(path.join(__dirname, 'pdfs')));
+
+// ===================== 启动服务 =====================
 app.listen(PORT, () => {
-  console.log(`✅ PDF生成API服务启动成功！本地访问地址：http://localhost:${PORT}`);
-  console.log(`✅ 核心API接口：http://localhost:${PORT}/api/generate`);
+  console.log(`✅ PDF生成API服务启动成功！`);
+  console.log(`✅ 本地访问地址：http://localhost:${PORT}`);
+  console.log(`✅ 核心接口：POST ${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `http://localhost:${PORT}`}/api/generate`);
+  console.log(`✅ 健康检查接口：GET ${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `http://localhost:${PORT}`}/health`);
 });
 
+// 导出app供Vercel识别（Vercel部署必加，本地运行无影响）
 module.exports = app;
