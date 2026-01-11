@@ -1,19 +1,31 @@
 {
   "version": 2,
+  "buildCommand": "npm install",
+  "installCommand": "npm install --force",
   "builds": [
     {
-      "src": "index.js",
-      "use": "@vercel/node",
-      "config": { "maxLambdaSize": "50mb", "runtime": "nodejs18.x" }
+      "src": "./index.js",
+      "use": "@vercel/node@2.15.0",
+      "config": { 
+        "maxLambdaSize": "50mb", 
+        "runtime": "nodejs16.x",
+        "nodeVersion": "16.x"
+      }
     }
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "index.js" }
+    { "src": "/(.*)", "dest": "/index.js", "methods": ["GET", "POST"] }
   ],
   "functions": {
     "index.js": {
       "memory": 1024,
-      "maxDuration": 30
+      "maxDuration": 30,
+      "nodejs": {
+        "version": "16.x"
+      }
     }
+  },
+  "settings": {
+    "disableBuildCache": true
   }
 }
