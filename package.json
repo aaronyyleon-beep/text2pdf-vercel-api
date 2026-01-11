@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "vercel-build": "vercel build --no-cache"  // ✅ 新增这行：禁用构建缓存+强制稳定构建
+    "vercel-build": "vercel build --no-cache"  
   },
   "dependencies": {
     "express": "^4.18.2",
@@ -17,3 +17,4 @@
   },
   "license": "MIT"
 }
+
