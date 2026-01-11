@@ -1,0 +1,20 @@
+{
+  "name": "text2pdf-vercel-api",
+  "version": "1.0.0",
+  "description": "文本生成固定模板PDF报告的API接口，适配Vercel/本地部署，中文无乱码",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "vercel-build": "echo 'Build complete'"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "html-pdf-node": "^1.0.8",
+    "cors": "^2.8.5",
+    "uuid": "^9.0.1"
+  },
+  "engines": {
+    "node": ">=16.x"
+  },
+  "license": "MIT"
+}
